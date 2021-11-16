@@ -1,0 +1,98 @@
+---
+title: "Detecting contamination in microbiome research with decontam"
+author: "LaShanda Rena Williams, PhD (BioData Lab)"
+date: "11/15/2021"
+output: html_document
+---
+
+This dataset was obtained from the [doctoral dissertation](https://www.proquest.com/docview/2339793725?pq-origsite=gscholar&fromopenview=true) of [Dr. LaShanda Williams](https://biodatalab.company/lashanda-williams-phd/). You will find the sequences in this dataset [here](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA643812).  
+Note: The samples were shotgun sequenced and only 16S profiles were used in the analysis below. 
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(phyloseq)
+library(decontam)
+library(tidyverse)
+library(DT)
+
+load(file = "diss_phyloseq.RData")
+classification <- c("kingdom", "phylum", "class", "order", "family", "genus", "species")
+otu_taxonomy <- read_delim("otu_info/97_otu_taxonomy.txt", col_names = classification)
+```
+
+```{r data-preview}
+
+a <- prune_taxa(taxa_sums(a) > 1, a)
+a <- prune_samples(sample_sums(a) > 0, a)
+a
+datatable(sample_data(a))
+```
+
+We'll begin by getting an idea of how library size compares between samples (calculus) and blanks. This is an important first step especially in low biomass samples since negatives can have similar library sizes to samples in those cases. 
+
+```{r library-size}
+df <- as.data.frame(sample_data(a))
+df$LibrarySize <- sample_sums(a)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=Env)) + geom_point()
+```
+
+We can see the library size is low in negatives (blanks) compared to samples. While there are low yield samples that may be considered for removal, we'll keep them in this preliminary contamination analysis.  
+
+Next, let's see how much of the variation within the dataset can be explained by metadata features. 
+
+```{r ordination}
+a.ord <- ordinate(a, "PCoA", "bray")
+plot_ordination(a, a.ord, type="samples", color="Env")
+```
+
+Axis 1 and 2 explain ~20% of the variation in the dataset. The samples appear to be more distinct from each other than the negatives which cluster very closely to one another.  
+
+Next, let's begin our contamination analysis using the `isContaminant` function from the [decontam](https://benjjneb.github.io/decontam/) package using the prevalence method. Ideally you'd do some exploratory analysis to see if which threshold is most appropriate for classification of contaminants vs. non-contaminants. We illustrate how to change the threshold below.  
+
+The default threshold is 0.1 and we illustrate the results from the more aggressive threshold set at 0.5. Sequences are classified as contaminants if their probability or `p` is under 0.1. 
+
+```{r threshold-0.1}
+sample_data(a)$is.neg <- sample_data(a)$Env == "blank"
+contamdf.prev.01 <- isContaminant(a, method="prevalence", neg="is.neg", threshold=0.1)
+table(contamdf.prev.01$contaminant)
+```
+
+```{r threshold-0.5}
+contamdf.prev.05 <- isContaminant(a, method="prevalence", neg="is.neg", threshold=0.5)
+table(contamdf.prev.05$contaminant)
+row_indices <- which(contamdf.prev.05$contaminant) #grab the row indices that correspond with identified contaminants to locate taxonomic information in the corresponding OTU file
+```
+
+It is recommended that you extract the taxonomic information of identified contaminants and review the literature in your study area to learn more about their expected presence/absence in your research. 
+
+```{r taxa-extraction}
+
+taxonomy_table <- tibble()
+
+for (i in row_indices){
+  loc <-  contamdf.prev.05[i, 0]
+  tax_key <- row.names(loc)
+  tax_value <- otu_taxonomy[tax_key, ]
+  taxonomy_table <- rbind(taxonomy_table, tax_value)
+}
+
+names(taxonomy_table) <- classification
+datatable(taxonomy_table)
+```
+
+Finally, you can quickly prune contaminant taxa using phyloseq's `prune_taxa` function. 
+```{r prune-contaminants}
+final_biom <- prune_taxa(!contamdf.prev.05$contaminant, a)
+final_biom
+```
+
+```{r session-info}
+sessionInfo()
+```
+
+Need help in with your microbiome data analysis? Learn more about our [Microbiome Data Analysis Suite](https://biodatalab.company/microbiome-data-analysis-suite/) offered by the BioData Lab.  
+
+Or schedule a [consultation](https://calendly.com/lrwilli/da-inquiry) with us today! 
